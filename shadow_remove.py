@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from segment_and_extract_features import calculate_features, segment,segment_image
+from segment_and_extract_features import calculate_features, segment,segment_image, edison_meanshift_segmentation
 from skimage import color
 
 
@@ -17,7 +17,7 @@ def main():
     seg, segnum = segment(image)
     # seg, segnum = mean_shift_segment(image)
     # seg, segnum = segment_image(image)
-
+    seg, segnum = edison_meanshift_segmentation(image)
     
     # 顯示分割結果
     print(f"分割完成，區域數量: {segnum}")

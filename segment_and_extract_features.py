@@ -81,6 +81,60 @@ def segment_image(img, spatial_bandwidth=9, range_bandwidth=25, min_region_area=
 
     return seg, segnum
 
+def edison_meanshift_segmentation(img, spatial_bandwidth=9, range_bandwidth=25, min_region_area=200):
+    """
+    使用 Mean Shift 方法進行圖像分割，與 `segment_image` 格式一致。
+    
+    參數:
+        img: 輸入的 BGR 圖像 (numpy array, shape: [H, W, 3])
+        spatial_bandwidth: 空間帶寬，用於位置權重調整 (int)
+        range_bandwidth: 顏色帶寬，用於顏色權重調整 (int)
+        min_region_area: 最小區域面積阈值 (int)
+    
+    返回:
+        seg: 分割後的標籤矩陣 (numpy array, shape: [H, W])
+        segnum: 分割區域數量
+    """
+    # 將圖像縮小以加速處理
+    img_resized = cv2.resize(img, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_LINEAR)
+    img_luv = cv2.cvtColor(img_resized, cv2.COLOR_BGR2Luv)
+
+    # 提取特徵：顏色 + 空間位置
+    h, w, c = img_luv.shape
+    flat_img = img_luv.reshape((-1, c))
+    x, y = np.meshgrid(np.arange(w), np.arange(h))
+    flat_features = np.hstack((
+        flat_img / range_bandwidth,
+        x.reshape(-1, 1) / spatial_bandwidth,
+        y.reshape(-1, 1) / spatial_bandwidth
+    ))
+
+    # 執行 Mean Shift 聚類
+    print("開始 Mean Shift 聚類...")
+    ms = MeanShift(bandwidth=1, bin_seeding=True)
+    ms.fit(flat_features)
+    print("Mean Shift 聚類完成！")
+
+    # 重塑標籤矩陣
+    labels = ms.labels_.reshape(h, w)
+
+    # 濾除小區域
+    unique_labels, label_counts = np.unique(labels, return_counts=True)
+    small_labels = unique_labels[label_counts < min_region_area]
+
+    for small_label in small_labels:
+        small_region_mask = (labels == small_label)
+        neighbor_labels = np.unique(labels[small_region_mask])
+        neighbor_labels = neighbor_labels[neighbor_labels != small_label]
+        if len(neighbor_labels) > 0:
+            mode_label = np.argmax(np.bincount(neighbor_labels))
+            labels[small_region_mask] = mode_label
+
+    segnum = len(np.unique(labels))
+
+    return labels, segnum
+
+
 def enforce_minimum_region_area(seg, min_area):
     """
     过滤掉分割结果中面积小于指定阈值的区域
