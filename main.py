@@ -363,14 +363,14 @@ def main():
         print("input{}.jpg".format(i + 1))
         img = cv2.imread("data/input{}.jpg".format(i + 1))
 
-        #segmented_img, border_img = mean_shift(img)
+        segmented_img, border_img = mean_shift(img)
         #segmented_img, border_img = quick_shift(img)
 
         #cv2.imshow("meanshift", border_img)
         #cv2.waitKey(0)
         #cv2.imwrite("result/input{}_meanshift.jpg".format(i + 1), border_img)
         
-        #np.save('segmented_img_input{}.npy'.format(i + 1), segmented_img)
+        np.save('segmented_img_input{}.npy'.format(i + 1), segmented_img)
         segmented_img = np.load('segmented_img_input{}.npy'.format(i + 1))
 
         center_indices, center_marked_img = find_center(img, segmented_img)
