@@ -1,9 +1,11 @@
 import cv2
 import numpy as np
 import os
-from sklearn.cluster import MeanShift, estimate_bandwidth
+import sys
+from sklearn.cluster import MeanShift, estimate_bandwidth, KMeans
 from skimage.segmentation import mark_boundaries, quickshift
 from skimage.feature import local_binary_pattern
+import matplotlib.pyplot as plt
 
 
 def quick_shift(img): 
@@ -96,7 +98,7 @@ def histogram(traget_img, segmented_img, binNum):
     for cnt, bin_val in enumerate(binVal):
         I = (traget_img.ravel() == bin_val)
         for iReg in range(0, label_num):
-            desc[iReg - 1, cnt] = np.sum(I[ind[iReg]])
+            desc[iReg, cnt] = np.sum(I[ind[iReg]])
     
     # Normalize the descriptor
     tmp = np.sum(desc, axis=1, keepdims=True)
@@ -107,7 +109,7 @@ def histogram(traget_img, segmented_img, binNum):
 
 def cal_gradient_hist(img, segmented_img):
 
-    gray_img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     
     grad_x = cv2.Sobel(gray_img, cv2.CV_32F, 1, 0, ksize=3)
     grad_y = cv2.Sobel(gray_img, cv2.CV_32F, 0, 1, ksize=3)
@@ -118,7 +120,7 @@ def cal_gradient_hist(img, segmented_img):
 
 def cal_texture_hist(img, segmented_img):
 
-    gray_img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     #gray_img = cv2.GaussianBlur(gray_img, (5, 5), 0)
 
     # LBP 參數
@@ -169,6 +171,84 @@ def draw_nearest_region(img, segmented_img, center_indices, near_labels):
         cv2.line(near_img, center_index_i, center_index_near_i, (255, 0, 0))
     return near_img
 
+def shadow_light_cluster(img, segmented_img):
+
+    hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    h_img, v_img = hsv_img[:, :, 0], hsv_img[:, :, 2]
+    h_norm = np.interp(h_img, (h_img.min(), h_img.max()), (0, 1))
+    v_norm = np.interp(v_img, (v_img.min(), v_img.max()), (0, 1))
+    r = h_norm / (v_norm + 1e-10)  # Add small epsilon to prevent division by zero
+
+    label_num = len(np.unique(segmented_img))
+
+    # Remove extreme values
+    segmented_img_remove_extreme = segmented_img.copy()
+    segmented_img_remove_extreme[v_norm == 0] = -1
+    
+    # Prepare indices for regions
+    ind = {}
+    for iReg in range(0, label_num):
+        ind[iReg] = (segmented_img_remove_extreme.ravel() == iReg)
+    
+    # Calculate the descriptor
+    r = r.ravel()
+    R = np.zeros((label_num))
+    for iReg in range(0, label_num):
+        R[iReg] = np.sum(r[ind[iReg]]) / np.sum(ind[iReg])
+
+    model = KMeans(n_clusters=2, random_state=1)
+    model.fit(R.reshape(-1, 1))
+    cluster_labels = model.labels_
+    cluster_centers = model.cluster_centers_
+
+    cluster_std = np.zeros_like(cluster_centers)
+    cluster_std[0] = np.std(R.ravel()[cluster_labels == 0])
+    cluster_std[1] = np.std(R.ravel()[cluster_labels == 1])
+
+    # Ensure cluster_centers[0] is Clit and cluster_centers[1] is Cshadow (Clit =< Cshadow)
+    if(cluster_centers[0] > cluster_centers[1]):
+        cluster_centers[[0, 1]] = cluster_centers[[1, 0]]
+        cluster_std[[0, 1]] = cluster_std[[1, 0]]
+        cluster_labels = cluster_labels ^ 1
+
+    print("np.hstack(R.ravel(), c)")
+    print(np.transpose(np.vstack([R.ravel(), cluster_labels])))
+    print("cluster_centers =", cluster_centers)
+    print("cluster_std =", cluster_std)
+
+    plt.scatter(R.ravel(), np.zeros_like(R.ravel()), c=cluster_labels, s=10)
+    plt.scatter(cluster_centers, np.zeros_like(cluster_centers), c='red', s=30)
+    plt.show()
+
+    # Mark the shadow region calculated by KMeans in the image
+    shadow_indices = np.where(cluster_labels == 1)[0]
+    shadow_mask = np.zeros_like(segmented_img)
+    for i in shadow_indices:
+        shadow_mask[segmented_img == i] = 1
+    kmeans_img = img.copy()
+    kmeans_img[np.where(shadow_mask == 1)] = np.array([255, 0, 0])
+
+    return cluster_centers, cluster_std, kmeans_img
+
+
+def shadow_detection(img, segmented_img, cluster_centers, cluster_std):
+
+    ycrcb_img = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
+
+    # Prepare indices for regions
+    ind = {}
+    for iReg in range(0, label_num):
+        ind[iReg] = (segmented_img_remove_extreme.ravel() == iReg)
+    
+    # Calculate the descriptor
+    r = r.ravel()
+    R = np.zeros((label_num))
+    for iReg in range(0, label_num):
+        R[iReg] = np.sum(r[ind[iReg]]) / np.sum(ind[iReg])
+
+    #label_num = len(np.unique(segmented_img))
+
+    #refuse = zeros([1, segnum])
 
 """
 Main function
@@ -186,7 +266,7 @@ def main():
 
         #cv2.imshow("meanshift", border_img)
         #cv2.waitKey(0)
-        cv2.imwrite("result/input{}_meanshift.jpg".format(i + 1), border_img)
+        #cv2.imwrite("result/input{}_meanshift.jpg".format(i + 1), border_img)
         
         np.save('segmented_img_input{}.npy'.format(i + 1), segmented_img)
         segmented_img = np.load('segmented_img_input{}.npy'.format(i + 1))
@@ -195,23 +275,31 @@ def main():
 
         #cv2.imshow("center_indices", center_marked_img)
         #cv2.waitKey(0)
-        cv2.imwrite("result/input{}_center_marked.jpg".format(i + 1), center_marked_img)
+        #cv2.imwrite("result/input{}_center_marked.jpg".format(i + 1), center_marked_img)
 
         near_labels, grad_mag, lbp_norm = find_nearest_region(img, segmented_img, center_indices)
 
         #cv2.imshow("gradient_img".format(i+1), grad_mag.astype(np.uint8))
         #cv2.waitKey(0)
-        cv2.imwrite("result/input{}_gradient.jpg".format(i+1), grad_mag)
+        #cv2.imwrite("result/input{}_gradient.jpg".format(i+1), grad_mag)
         
         #cv2.imshow("texture_img", lbp_norm)
         #cv2.waitKey(0)
-        cv2.imwrite("result/input{}_texture.jpg".format(i+1), lbp_norm)
+        #cv2.imwrite("result/input{}_texture.jpg".format(i+1), lbp_norm)
 
         near_img = draw_nearest_region(img, segmented_img, center_indices, near_labels)
 
         #cv2.imshow("near_img".format(i+1), near_img)
         #cv2.waitKey(0)
-        cv2.imwrite("result/input{}_nearest_region.jpg".format(i+1), near_img)
+        #cv2.imwrite("result/input{}_nearest_region.jpg".format(i+1), near_img)
+
+        cluster_centers, cluster_std, kmeans_img = shadow_light_cluster(img, segmented_img)
+
+        cv2.imshow("kmeans", kmeans_img)
+        cv2.waitKey(0)
+        cv2.imwrite("result/input{}_kmeans.jpg".format(i + 1), kmeans_img)
+
+        #shadow_detection(img, segmented_img, cluster_centers, cluster_std)
 
 
 if __name__ == "__main__":
