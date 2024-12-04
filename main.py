@@ -6,6 +6,7 @@ from sklearn.cluster import MeanShift, estimate_bandwidth, KMeans
 from skimage.segmentation import mark_boundaries, quickshift
 from skimage.feature import local_binary_pattern
 import matplotlib.pyplot as plt
+from scipy.stats import norm
 
 
 def quick_shift(img): 
@@ -171,7 +172,7 @@ def draw_nearest_region(img, segmented_img, center_indices, near_labels):
         cv2.line(near_img, center_index_i, center_index_near_i, (255, 0, 0))
     return near_img
 
-def shadow_light_cluster(img, segmented_img):
+def cal_region_avg_R(img, segmented_img):
 
     hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     h_img, v_img = hsv_img[:, :, 0], hsv_img[:, :, 2]
@@ -190,11 +191,56 @@ def shadow_light_cluster(img, segmented_img):
     for iReg in range(0, label_num):
         ind[iReg] = (segmented_img_remove_extreme.ravel() == iReg)
     
-    # Calculate the descriptor
+    # Calculate average R value for each region
     r = r.ravel()
     R = np.zeros((label_num))
     for iReg in range(0, label_num):
         R[iReg] = np.sum(r[ind[iReg]]) / np.sum(ind[iReg])
+
+    return R
+
+def cal_region_avg_Y(img, segmented_img):
+    
+    ycrcb_img = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
+
+    label_num = len(np.unique(segmented_img))
+
+    # Prepare indices for regions
+    ind = {}
+    for iReg in range(0, label_num):
+        ind[iReg] = (segmented_img.ravel() == iReg)
+    
+    # Calculate average Y value for each region
+    y = ycrcb_img[:, :, 0].ravel()
+    Y = np.zeros((label_num))
+    for iReg in range(0, label_num):
+        Y[iReg] = np.sum(y[ind[iReg]]) / np.sum(ind[iReg])
+
+    return Y
+
+
+def cal_region_avg_H(img, segmented_img):
+    
+    hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+
+    label_num = len(np.unique(segmented_img))
+
+    # Prepare indices for regions
+    ind = {}
+    for iReg in range(0, label_num):
+        ind[iReg] = (segmented_img.ravel() == iReg)
+    
+    # Calculate average H value for each region
+    h = hsv_img[:, :, 0].ravel()
+    H = np.zeros((label_num))
+    for iReg in range(0, label_num):
+        H[iReg] = np.sum(h[ind[iReg]]) / np.sum(ind[iReg])
+
+    return H
+
+def shadow_light_cluster(img, segmented_img):
+
+    R = cal_region_avg_R(img, segmented_img)
 
     model = KMeans(n_clusters=2, random_state=1)
     model.fit(R.reshape(-1, 1))
@@ -216,9 +262,9 @@ def shadow_light_cluster(img, segmented_img):
     print("cluster_centers =", cluster_centers)
     print("cluster_std =", cluster_std)
 
-    plt.scatter(R.ravel(), np.zeros_like(R.ravel()), c=cluster_labels, s=10)
-    plt.scatter(cluster_centers, np.zeros_like(cluster_centers), c='red', s=30)
-    plt.show()
+    #plt.scatter(R.ravel(), np.zeros_like(R.ravel()), c=cluster_labels, s=10)
+    #plt.scatter(cluster_centers, np.zeros_like(cluster_centers), c='red', s=30)
+    #plt.show()
 
     # Mark the shadow region calculated by KMeans in the image
     shadow_indices = np.where(cluster_labels == 1)[0]
@@ -226,29 +272,85 @@ def shadow_light_cluster(img, segmented_img):
     for i in shadow_indices:
         shadow_mask[segmented_img == i] = 1
     kmeans_img = img.copy()
-    kmeans_img[np.where(shadow_mask == 1)] = np.array([255, 0, 0])
+    kmeans_img[np.where(shadow_mask == 1)] = np.array([0, 0, 255])
 
     return cluster_centers, cluster_std, kmeans_img
 
 
-def shadow_detection(img, segmented_img, cluster_centers, cluster_std):
+def shadow_detection(img, segmented_img, cluster_centers, cluster_std, near_labels):
+    
+    label_num = len(np.unique(segmented_img))
+    
+    Y_region = cal_region_avg_Y(img, segmented_img)
+    R_region = cal_region_avg_R(img, segmented_img)
+    H_region = cal_region_avg_H(img, segmented_img)
+    label = np.ones((label_num))
 
     ycrcb_img = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
+    Y_mean = np.mean(ycrcb_img[:, :, 0])
+    print("Y_mean", Y_mean)
 
-    # Prepare indices for regions
-    ind = {}
-    for iReg in range(0, label_num):
-        ind[iReg] = (segmented_img_remove_extreme.ravel() == iReg)
-    
-    # Calculate the descriptor
-    r = r.ravel()
-    R = np.zeros((label_num))
-    for iReg in range(0, label_num):
-        R[iReg] = np.sum(r[ind[iReg]]) / np.sum(ind[iReg])
+    # 2) 若 Yi < 60% ∗ mean(Yimage)，则 labeli = shadow
+    for iReg in range(label_num):
+        if(Y_region[iReg] < Y_mean * 0.6):
+            label[iReg] = 0     # 0 = shadow, 1 = not shadow
 
-    #label_num = len(np.unique(segmented_img))
+    refuse = np.zeros((label_num))
 
-    #refuse = zeros([1, segnum])
+    # 5) 反复迭代执⾏步骤 3)-4)，直到不再有更新发⽣；
+    while(1):
+        # 3) 选取 Fshadow 最⼤且 Refusei = 0 的区域 Si，设置 labeli = shadow；
+        update = False
+        max_F_shadow = 0
+        max_F_shadow_label = 0
+        for iReg in range(label_num):
+            F_shadow = norm.cdf((R_region[iReg] - cluster_centers[1]) / cluster_std[1])
+            F_lit = norm.cdf(-(R_region[iReg] - cluster_centers[0]) / cluster_std[0])
+            if(F_lit < F_shadow and refuse[iReg] == 0 and label[iReg] == 1):
+                if(F_shadow > max_F_shadow):
+                    update = True
+                    max_F_shadow = F_shadow
+                    max_F_shadow_label = iReg
+        print("max_F_shadow =", max_F_shadow)            
+        print("max_F_shadow_label =", max_F_shadow_label)
+        if(not update): #if update == False || max_F_shadow < 0.0028
+            print("no update: break")
+            break
+        print("update")
+        label[max_F_shadow_label] = 0
+
+        # 4) 记 Si 最近区域 Neari 为 Sj，通过⽐较 Ri, Rj，检查 Si 与 Sj 是否为光亮相反区域，如果是，判断 Refusej = 1；
+        i = max_F_shadow_label
+        j = near_labels[max_F_shadow_label]
+        z_i = (R_region[i] - cluster_centers[1]) / cluster_std[1]
+        z_j = (R_region[j] - cluster_centers[1]) / cluster_std[1]
+        if(z_i - z_j > 3):
+            refuse[j] = 1
+            label[j] = 1
+
+    # 6) 对于 labeli = shadow 的 Si，通过⽐较 Yi, Yj , Ri, Rj，如果判断 Si 与 Sj 光亮类似，且Refusej = 0，设置 labelj = 0。
+    for i in range(label_num):
+        if(label[i] == 0):
+            j = near_labels[i]
+            min_H = min(H_region[i], H_region[j])
+            max_H = max(H_region[i], H_region[j])
+            min_Y = min(Y_region[i], Y_region[j])
+            max_Y = max(Y_region[i], Y_region[j])
+            min_R = min(R_region[i], R_region[j])
+            max_R = max(R_region[i], R_region[j])
+            if(min_H / max_H + min_Y / max_Y + min_R / max_R > 2.5 and refuse[j] == 0):
+                label[j] == 0
+
+    #visualization
+    shadow_indices = np.where(label == 0)[0]
+    shadow_mask = np.zeros_like(segmented_img)
+    for i in shadow_indices:
+        shadow_mask[segmented_img == i] = 1
+    shadow_detect_img = img.copy()
+    shadow_detect_img[np.where(shadow_mask == 1)] = np.array([255, 0, 0])
+
+    return label, shadow_detect_img
+
 
 """
 Main function
@@ -261,14 +363,14 @@ def main():
         print("input{}.jpg".format(i + 1))
         img = cv2.imread("data/input{}.jpg".format(i + 1))
 
-        segmented_img, border_img = mean_shift(img)
+        #segmented_img, border_img = mean_shift(img)
         #segmented_img, border_img = quick_shift(img)
 
         #cv2.imshow("meanshift", border_img)
         #cv2.waitKey(0)
         #cv2.imwrite("result/input{}_meanshift.jpg".format(i + 1), border_img)
         
-        np.save('segmented_img_input{}.npy'.format(i + 1), segmented_img)
+        #np.save('segmented_img_input{}.npy'.format(i + 1), segmented_img)
         segmented_img = np.load('segmented_img_input{}.npy'.format(i + 1))
 
         center_indices, center_marked_img = find_center(img, segmented_img)
@@ -299,7 +401,11 @@ def main():
         cv2.waitKey(0)
         cv2.imwrite("result/input{}_kmeans.jpg".format(i + 1), kmeans_img)
 
-        #shadow_detection(img, segmented_img, cluster_centers, cluster_std)
+        label, shadow_detect_img= shadow_detection(img, segmented_img, cluster_centers, cluster_std, near_labels)
+        
+        cv2.imshow("shadow_detect", shadow_detect_img)
+        cv2.waitKey(0)
+        cv2.imwrite("result/input{}_shadow_detect.jpg".format(i + 1), shadow_detect_img)
 
 
 if __name__ == "__main__":
