@@ -18,7 +18,7 @@ def quick_shift(img):
         LAB_img,
         kernel_size=9,    # 對應 MATLAB 的 SpatialBandWidth
         max_dist=15,      # 對應 MATLAB 的 RangeBandWidth
-        ratio=0.1         # 可調參數，用於控制區域間距離
+        ratio=0.1       # 可調參數，用於控制區域間距離
     )
     # 獲取區域數量
     segnum = np.max(seg)  # 最大標籤值即為區域數量
@@ -114,7 +114,7 @@ def cal_gradient_hist(img, segmented_img):
     
     grad_x = cv2.Sobel(gray_img, cv2.CV_32F, 1, 0, ksize=3)
     grad_y = cv2.Sobel(gray_img, cv2.CV_32F, 0, 1, ksize=3)
-    grad_mag = np.sqrt(grad_x**2 + grad_y**2)
+    grad_mag = np.sqrt(grad_x**2 + grad_y**2) 
 
     return histogram(grad_mag, segmented_img, 20), grad_mag
    
@@ -132,6 +132,47 @@ def cal_texture_hist(img, segmented_img):
     
     return histogram(lbp_norm, segmented_img, 128), lbp_norm
 
+def apply_gabor_filters(gray_img, scales=5, orientations=8):
+    """
+    Apply Gabor filters with multiple scales and orientations to the grayscale image.
+    """
+    gabor_results = []
+    for scale in range(scales):
+        for theta in range(orientations):
+            theta_angle = theta * np.pi / orientations
+            sigma = 4.0  # Standard deviation of the Gaussian function
+            lambd = 10.0  # Wavelength of the sinusoidal factor
+            gamma = 0.5  # Spatial aspect ratio
+            kernel_size = 21  # Kernel size
+            psi = 0  # Phase offset
+            
+            # Create Gabor kernel
+            gabor_kernel = cv2.getGaborKernel(
+                (kernel_size, kernel_size), sigma, theta_angle, lambd, gamma, psi, ktype=cv2.CV_32F
+            )
+            
+            # Apply filter
+            filtered_img = cv2.filter2D(gray_img, cv2.CV_32F, gabor_kernel)
+            gabor_results.append(filtered_img)
+    
+    return gabor_results
+
+def cal_texture_hist_gabor(img, segmented_img):
+    """
+    Calculate texture histogram using Gabor filters.
+    """
+    gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    
+    # Apply Gabor filters
+    gabor_filtered_imgs = apply_gabor_filters(gray_img, 5, 8)
+    
+    # Combine all Gabor responses by summing their magnitudes
+    combined_response = np.sum(np.abs(np.array(gabor_filtered_imgs)), axis=0)
+    
+    # Normalize combined response
+    response_norm = np.interp(combined_response, (combined_response.min(), combined_response.max()), (0, 255)).astype(np.uint8)
+    
+    return histogram(response_norm, segmented_img, 128), response_norm
 
 def cal_center_dist(img, i, j, center_indices):
     height, width, _ = img.shape
@@ -141,9 +182,9 @@ def cal_center_dist(img, i, j, center_indices):
     return dist_norm
 
 def find_nearest_region(img, segmented_img, center_indices):
-    label_num = len(np.unique(segmented_img))
+    label_num = len(np.unique(segmented_img)) 
     near_labels = np.full((label_num), -1)
-    print("near_labels.shape", near_labels.shape)
+    # print("near_labels.shape", near_labels.shape)
 
     gradient_hist, grad_mag = cal_gradient_hist(img, segmented_img)
     texture_hist, lbp_norm = cal_texture_hist(img, segmented_img)
@@ -159,7 +200,7 @@ def find_nearest_region(img, segmented_img, center_indices):
         distances[i] = max(distances) + 1
         near_label = distances.index(min(distances))
         near_labels[i] = near_label
-    print("near_labels", near_labels)
+    # print("near_labels", near_labels)
 
     return near_labels, grad_mag, lbp_norm
 
@@ -170,6 +211,16 @@ def draw_nearest_region(img, segmented_img, center_indices, near_labels):
         center_index_i =  tuple(np.flip(center_indices[i]))
         center_index_near_i = tuple(np.flip(center_indices[near_labels[i]]))
         cv2.line(near_img, center_index_i, center_index_near_i, (255, 0, 0))
+    return near_img
+
+def draw_nearest_region_only_shadow(img, segmented_img, center_indices, near_labels,labels):
+    label_num = len(np.unique(segmented_img))
+    near_img = (mark_boundaries(img, segmented_img, color=(0, 0, 0)) * 255).astype(np.uint8)
+    for i in range(label_num):
+        if labels[i] == 0:
+            center_index_i =  tuple(np.flip(center_indices[i]))
+            center_index_near_i = tuple(np.flip(center_indices[near_labels[i]]))
+            cv2.line(near_img, center_index_i, center_index_near_i, (255, 0, 0))
     return near_img
 
 def cal_region_avg_R(img, segmented_img):
@@ -257,10 +308,10 @@ def shadow_light_cluster(img, segmented_img):
         cluster_std[[0, 1]] = cluster_std[[1, 0]]
         cluster_labels = cluster_labels ^ 1
 
-    print("np.hstack(R.ravel(), c)")
-    print(np.transpose(np.vstack([R.ravel(), cluster_labels])))
-    print("cluster_centers =", cluster_centers)
-    print("cluster_std =", cluster_std)
+    # print("np.hstack(R.ravel(), c)")
+    # print(np.transpose(np.vstack([R.ravel(), cluster_labels])))
+    # print("cluster_centers =", cluster_centers)
+    # print("cluster_std =", cluster_std)
 
     #plt.scatter(R.ravel(), np.zeros_like(R.ravel()), c=cluster_labels, s=10)
     #plt.scatter(cluster_centers, np.zeros_like(cluster_centers), c='red', s=30)
@@ -288,7 +339,7 @@ def shadow_detection(img, segmented_img, cluster_centers, cluster_std, near_labe
 
     ycrcb_img = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
     Y_mean = np.mean(ycrcb_img[:, :, 0])
-    print("Y_mean", Y_mean)
+    # print("Y_mean", Y_mean)
 
     # 2) 若 Yi < 60% ∗ mean(Yimage)，则 labeli = shadow
     for iReg in range(label_num):
@@ -311,12 +362,12 @@ def shadow_detection(img, segmented_img, cluster_centers, cluster_std, near_labe
                     update = True
                     max_F_shadow = F_shadow
                     max_F_shadow_label = iReg
-        print("max_F_shadow =", max_F_shadow)            
-        print("max_F_shadow_label =", max_F_shadow_label)
+        # print("max_F_shadow =", max_F_shadow)            
+        # print("max_F_shadow_label =", max_F_shadow_label)
         if(not update): #if update == False || max_F_shadow < 0.0028
-            print("no update: break")
+            # print("no update: break")
             break
-        print("update")
+        # print("update")
         label[max_F_shadow_label] = 0
 
         # 4) 记 Si 最近区域 Neari 为 Sj，通过⽐较 Ri, Rj，检查 Si 与 Sj 是否为光亮相反区域，如果是，判断 Refusej = 1；
@@ -351,6 +402,94 @@ def shadow_detection(img, segmented_img, cluster_centers, cluster_std, near_labe
 
     return label, shadow_detect_img
 
+def hist_match(source, template):
+    """
+    Adjust the pixel values of the source image to match the histogram of the template image.
+    """
+    s_values, bin_idx, s_counts = np.unique(source, return_inverse=True, return_counts=True)
+    t_values, t_counts = np.unique(template, return_counts=True)
+    
+    # Compute the cumulative distribution functions (CDF)
+    s_cdf = np.cumsum(s_counts).astype(np.float64) / source.size
+    t_cdf = np.cumsum(t_counts).astype(np.float64) / template.size
+
+    # Interpolate to find the mapping
+    interp_t_values = np.interp(s_cdf, t_cdf, t_values)
+    
+    # Ensure the values are within the original range
+    matched = np.clip(interp_t_values[bin_idx], source.min(), source.max())
+    return matched.reshape(source.shape)
+
+def find_non_shadow_pair(img,label, segmented_img, center_indices):
+    label_num = len(np.unique(segmented_img))
+    near_labels = np.full((label_num), -1)
+
+    gradient_hist, grad_mag = cal_gradient_hist(img, segmented_img)
+    texture_hist, lbp_norm = cal_texture_hist(img, segmented_img)
+
+    for i in range(label_num):
+        if label[i] == 1:  # Skip non-shadow regions
+            continue
+        distances = []
+        valid_indices = []
+        for j in range(label_num):
+            if label[j] == 1:  # Only consider regions where label == 1
+                gradient_dist = np.sum(np.abs(gradient_hist[i] - gradient_hist[j]))
+                texture_dist = np.sum(np.abs(texture_hist[i] - texture_hist[j]))
+                center_dist = cal_center_dist(img, i, j, center_indices)
+                distance = gradient_dist + texture_dist + center_dist
+                distances.append(distance)
+                valid_indices.append(j)
+        
+        # Check if there are valid matches
+        if valid_indices:
+            # Find the minimum distance among valid matches
+            nearest_index = np.argmin(distances)
+            near_labels[i] = valid_indices[nearest_index]
+
+    return near_labels
+
+def shadow_removal(img, segmented_img, label, near_labels, center_indices,i):
+    """
+    Perform shadow removal based on histogram matching and boundary smoothing.
+    """
+    near_labels = find_non_shadow_pair(img,label, segmented_img, center_indices)
+    # draw nearest region
+    near_img = draw_nearest_region_only_shadow(img, segmented_img, center_indices, near_labels,label)
+    cv2.imwrite("result/{}_near_img.jpg".format(i), near_img)
+    hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV).astype(np.float32)
+    h_channel, s_channel, v_channel = hsv_img[:, :, 0], hsv_img[:, :, 1], hsv_img[:, :, 2]
+
+    for i, lbl in enumerate(label):
+        if lbl == 0:  # Shadow region
+            # Find the nearest non-shadow region
+            j = near_labels[i]
+            if label[j] == 1:  # Ensure it's a non-shadow region
+                # Perform histogram matching for each channel
+                print("Performing histogram matching for shadow region {} and non-shadow region {}".format(i, j))
+                shadow_mask = (segmented_img == i)
+                non_shadow_mask = (segmented_img == j)
+                
+                h_channel[shadow_mask] = hist_match(h_channel[shadow_mask], h_channel[non_shadow_mask])
+                s_channel[shadow_mask] = hist_match(s_channel[shadow_mask], s_channel[non_shadow_mask])
+                v_channel[shadow_mask] = hist_match(v_channel[shadow_mask], v_channel[non_shadow_mask])
+
+    h_channel = np.clip(h_channel, 0, 180)
+    s_channel = np.clip(s_channel, 0, 255)
+    v_channel = np.clip(v_channel, 0, 255)
+
+    # Combine back the channels
+    hsv_img[:, :, 0], hsv_img[:, :, 1], hsv_img[:, :, 2] = h_channel, s_channel, v_channel
+
+    # Convert back to BGR color space
+    result_img = cv2.cvtColor(hsv_img.astype(np.uint8), cv2.COLOR_HSV2BGR)
+
+    # Smooth shadow boundaries
+    kernel = cv2.getGaussianKernel(ksize=3, sigma=3)  # Adjust sigma for less aggressive smoothing
+    smooth_result_img = cv2.filter2D(result_img, -1, kernel)
+
+    return smooth_result_img
+
 
 """
 Main function
@@ -359,19 +498,22 @@ def main():
 
     os.makedirs("result", exist_ok=True)
 
-    for i in range(9):
-        print("input{}.jpg".format(i + 1))
-        img = cv2.imread("data/input{}.jpg".format(i + 1))
+    for i in range(4):
+        i = i+2
+        print("{}.jpg".format(i))
+        img = cv2.imread("data/{}.jpg".format(i))
 
-        segmented_img, border_img = mean_shift(img)
-        #segmented_img, border_img = quick_shift(img)
+        # TODO: STEP1 SHADOW DETECTION
+
+        # segmented_img, border_img = mean_shift(img)
+        segmented_img, border_img = quick_shift(img)
 
         #cv2.imshow("meanshift", border_img)
         #cv2.waitKey(0)
         #cv2.imwrite("result/input{}_meanshift.jpg".format(i + 1), border_img)
         
-        np.save('segmented_img_input{}.npy'.format(i + 1), segmented_img)
-        segmented_img = np.load('segmented_img_input{}.npy'.format(i + 1))
+        # np.save('segmented_img_input{}.npy'.format(i), segmented_img)
+        segmented_img = np.load('segmented_img_input{}.npy'.format(i))
 
         center_indices, center_marked_img = find_center(img, segmented_img)
 
@@ -391,21 +533,29 @@ def main():
 
         near_img = draw_nearest_region(img, segmented_img, center_indices, near_labels)
 
-        #cv2.imshow("near_img".format(i+1), near_img)
-        #cv2.waitKey(0)
-        #cv2.imwrite("result/input{}_nearest_region.jpg".format(i+1), near_img)
+        # cv2.imshow("near_img".format(i+1), near_img)
+        # cv2.waitKey(0)
+        # cv2.imwrite("result/{}_nearest_region.jpg".format(i), near_img)
 
         cluster_centers, cluster_std, kmeans_img = shadow_light_cluster(img, segmented_img)
 
-        cv2.imshow("kmeans", kmeans_img)
-        cv2.waitKey(0)
-        cv2.imwrite("result/input{}_kmeans.jpg".format(i + 1), kmeans_img)
+        # cv2.imshow("kmeans", kmeans_img)
+        # cv2.waitKey(0)
+        # cv2.imwrite("result/input{}_kmeans.jpg".format(i + 1), kmeans_img)
 
         label, shadow_detect_img= shadow_detection(img, segmented_img, cluster_centers, cluster_std, near_labels)
         
-        cv2.imshow("shadow_detect", shadow_detect_img)
-        cv2.waitKey(0)
-        cv2.imwrite("result/input{}_shadow_detect.jpg".format(i + 1), shadow_detect_img)
+        # cv2.imshow("shadow_detect", shadow_detect_img)
+        # cv2.waitKey(0)
+        cv2.imwrite("result/{}_shadow_detect.jpg".format(i), shadow_detect_img)
+
+
+        # TODO: STEP2 SHADOW REMOVAL
+        remove_img = shadow_removal(img, segmented_img, label, near_labels, center_indices,i)
+
+        # cv2.imshow("remove_img", remove_img)
+        # cv2.waitKey(0)
+        cv2.imwrite("result/{}_remove.jpg".format(i), remove_img)
 
 
 if __name__ == "__main__":

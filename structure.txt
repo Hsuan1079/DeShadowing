@@ -1,0 +1,41 @@
+main
+├── mean_shift / quick_shift   # 圖像分割
+│   └── 返回: segmented_img, border_img
+│
+├── find_center                # 計算每個分割區域的中心
+│   └── 輸入: segmented_img
+│   └── 返回: center_indices, center_marked_img
+│
+├── find_nearest_region        # 查找最近的相似區域
+│   ├── cal_gradient_hist      # 計算每個區域的梯度特徵
+│   ├── cal_texture_hist       # 計算每個區域的紋理特徵
+│   ├── cal_center_dist        # 計算區域中心距離
+│   └── 返回: near_labels, grad_mag, lbp_norm
+│
+├── draw_nearest_region        # 可視化最近的區域連線
+│   └── 輸入: near_labels, center_indices
+│   └── 返回: near_img
+│
+├── shadow_light_cluster       # 使用 KMeans 將區域分為陰影和非陰影
+│   ├── cal_region_avg_R       # 計算每個區域的 R 特徵平均值
+│   └── 返回: cluster_centers, cluster_std, kmeans_img
+│
+├── shadow_detection           # 精確陰影區域檢測
+│   ├── cal_region_avg_Y       # 計算每個區域的 Y 特徵平均值
+│   ├── cal_region_avg_R       # 計算每個區域的 R 特徵平均值
+│   ├── cal_region_avg_H       # 計算每個區域的 H 特徵平均值
+│   └── 返回: label, shadow_detect_img
+│
+├── 可視化和保存結果
+│   ├── cv2.imshow             # 顯示中間結果
+│   ├── cv2.imwrite            # 保存中間結果
+│   └── np.save                # 保存分割數據
+└── 結束
+
+segnum = label_num
+
+near = near_labels
+near_labels[i] = sj ## si paired sj 
+
+label = 0 陰影區域
+label = 1 非陰影區域
