@@ -16,7 +16,7 @@ def quick_shift(img):
     # 使用 Quickshift 分割圖像
     seg = quickshift(
         LAB_img,
-        kernel_size=9,    # 對應 MATLAB 的 SpatialBandWidth
+        kernel_size=15,    # 對應 MATLAB 的 SpatialBandWidth
         max_dist=15,      # 對應 MATLAB 的 RangeBandWidth
         ratio=0.1       # 可調參數，用於控制區域間距離
     )
@@ -39,7 +39,7 @@ def mean_shift(img):
     flat_img_with_coordinates = np.column_stack([flat_img, x.flatten(), y.flatten()])
 
     # Estimate bandwidth for Mean Shift
-    bandwidth = estimate_bandwidth(flat_img_with_coordinates, quantile=0.006, n_samples=500)
+    bandwidth = estimate_bandwidth(flat_img_with_coordinates, quantile=0.01, n_samples=500)
 
     # Perform Mean Shift clustering
     mean_shift = MeanShift(bandwidth=bandwidth, bin_seeding=True)
@@ -60,6 +60,62 @@ def mean_shift(img):
     border_img = (mark_boundaries(img, segmented_img, color=(0, 0, 0)) * 255).astype(np.uint8)
 
     return segmented_img, border_img
+
+def mean_shift_with_merge(img, min_region_size=800):
+    """
+    Perform Mean Shift segmentation and merge small regions.
+    
+    :param img: Input image
+    :param min_region_size: Minimum size of a region to retain. Smaller regions will be merged.
+    :return: segmented_img (label image), border_img (image with boundaries marked)
+    """
+
+    height, width, _ = img.shape
+    img = cv2.medianBlur(img, 3)
+    flat_img = img.reshape((-1, 3))
+
+    # Create the feature space
+    x, y = np.meshgrid(np.arange(width), np.arange(height))
+    flat_img_with_coordinates = np.column_stack([flat_img, x.flatten(), y.flatten()])
+
+    # Estimate bandwidth for Mean Shift
+    bandwidth = estimate_bandwidth(flat_img_with_coordinates, quantile=0.01, n_samples=500)
+
+    # Perform Mean Shift clustering
+    mean_shift = MeanShift(bandwidth=bandwidth, bin_seeding=True)
+    print("mean_shift.fit...")
+    mean_shift.fit(flat_img_with_coordinates)
+    labels = mean_shift.labels_
+
+    # Reshape the labels to the original image shape
+    segmented_img = labels.reshape((height, width))
+
+    # Merge small regions
+    unique_labels, counts = np.unique(segmented_img, return_counts=True)
+    small_regions = unique_labels[counts < min_region_size]
+
+    for region_label in small_regions:
+        mask = segmented_img == region_label
+
+        # Find the nearest neighboring region
+        dilated_mask = cv2.dilate(mask.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+        neighbor_labels = segmented_img[dilated_mask.astype(bool) & ~mask]
+        neighbor_labels = neighbor_labels[neighbor_labels != region_label]  # Exclude itself
+
+        if len(neighbor_labels) > 0:
+            # Replace the region_label with the most common neighboring label
+            most_common_label = np.bincount(neighbor_labels).argmax()
+            segmented_img[mask] = most_common_label
+
+    # Relabel to ensure labels are continuous
+    unique_labels = np.unique(segmented_img)
+    label_mapping = {old_label: new_label for new_label, old_label in enumerate(unique_labels)}
+    relabeled_img = np.vectorize(label_mapping.get)(segmented_img)
+
+    # Generate the boundary image
+    border_img = (mark_boundaries(img, relabeled_img, color=(0, 0, 0)) * 255).astype(np.uint8)
+
+    return relabeled_img, border_img
 
 
 def find_center(img, segmented_img):
@@ -404,70 +460,155 @@ def shadow_detection(img, segmented_img, cluster_centers, cluster_std, near_labe
 
 def hist_match(source, template):
     """
-    Adjust the pixel values of the source image to match the histogram of the template image.
+    Match the histogram of the source region to that of the template region.
+    
+    Parameters:
+    - source: ndarray
+        The pixel values in the shadow region.
+    - template: ndarray
+        The pixel values in the non-shadow region.
+
+    Returns:
+    - matched: ndarray
+        The pixel values of the source adjusted to match the template.
     """
-    s_values, bin_idx, s_counts = np.unique(source, return_inverse=True, return_counts=True)
-    t_values, t_counts = np.unique(template, return_counts=True)
-    
-    # Compute the cumulative distribution functions (CDF)
-    s_cdf = np.cumsum(s_counts).astype(np.float64) / source.size
-    t_cdf = np.cumsum(t_counts).astype(np.float64) / template.size
+    # 檢查是否有足夠像素進行匹配
+    if len(source) == 0 or len(template) == 0:
+        print("Empty source or template region. Skipping histogram matching.")
+        return source  # 原樣返回
 
-    # Interpolate to find the mapping
-    interp_t_values = np.interp(s_cdf, t_cdf, t_values)
-    
-    # Ensure the values are within the original range
-    matched = np.clip(interp_t_values[bin_idx], source.min(), source.max())
-    return matched.reshape(source.shape)
+    # 增加微小隨機噪聲以避免單一值問題
+    if np.ptp(source) == 0:  # 如果 source 是單一值（ptp: 最大值 - 最小值）
+        source = source + np.random.normal(scale=0.01, size=source.shape)
+    if np.ptp(template) == 0:  # 如果 template 是單一值
+        template = template + np.random.normal(scale=0.01, size=template.shape)
 
-def find_non_shadow_pair(img,label, segmented_img, center_indices):
-    label_num = len(np.unique(segmented_img))
-    near_labels = np.full((label_num), -1)
+    # 計算 source 和 template 的直方圖和累積分佈函數（CDF）
+    src_values, bin_idx, src_counts = np.unique(source, return_inverse=True, return_counts=True)
+    tmpl_values, tmpl_counts = np.unique(template, return_counts=True)
 
+    src_cdf = np.cumsum(src_counts).astype(np.float64) / source.size
+    tmpl_cdf = np.cumsum(tmpl_counts).astype(np.float64) / template.size
+
+    # 對應 source 的 CDF 到 template 的值
+    interp_tmpl_values = np.interp(src_cdf, tmpl_cdf, tmpl_values)
+
+    # 將對應值回映射到原圖
+    matched = interp_tmpl_values[bin_idx]
+
+    # 確保結果在有效範圍內（如 0~255）
+    matched = np.clip(matched, np.min(template), np.max(template))
+
+    return matched
+
+
+import numpy as np
+
+def find_non_shadow_pair(img, label, segmented_img, center_indices):
+    label_num = len(np.unique(segmented_img))  # 區域數量
+    near_labels = np.full((label_num), -1)    # 配對結果初始化為 -1
+
+    # 計算梯度與紋理直方圖
     gradient_hist, grad_mag = cal_gradient_hist(img, segmented_img)
     texture_hist, lbp_norm = cal_texture_hist(img, segmented_img)
 
+    # 圖像尺寸
+    img_height, img_width = img.shape[:2]
+    max_dim = max(img_height, img_width)  # 最大邊長，用於距離歸一化
+
     for i in range(label_num):
-        if label[i] == 1:  # Skip non-shadow regions
+        if label[i] == 1:  # 跳過非陰影區域
             continue
         distances = []
         valid_indices = []
+
         for j in range(label_num):
-            if label[j] == 1:  # Only consider regions where label == 1
+            if label[j] == 1:  # 僅考慮非陰影區域
+                # 計算梯度距離（絕對差值）
                 gradient_dist = np.sum(np.abs(gradient_hist[i] - gradient_hist[j]))
+
+                # 計算紋理距離（絕對差值）
                 texture_dist = np.sum(np.abs(texture_hist[i] - texture_hist[j]))
-                center_dist = cal_center_dist(img, i, j, center_indices)
-                distance = gradient_dist + texture_dist + center_dist
-                distances.append(distance)
+
+                # 計算幾何中心距離，並進行歸一化
+                center_i = center_indices[i]
+                center_j = center_indices[j]
+                euclidean_dist = np.sqrt((center_i[0] - center_j[0]) ** 2 + (center_i[1] - center_j[1]) ** 2)
+                center_dist = euclidean_dist / max_dim
+
+                # 總距離
+                total_distance = gradient_dist + texture_dist + center_dist
+                distances.append(total_distance)
                 valid_indices.append(j)
-        
-        # Check if there are valid matches
+
+        # 如果找到有效的非陰影區域，選擇距離最小的作為匹配對象
         if valid_indices:
-            # Find the minimum distance among valid matches
             nearest_index = np.argmin(distances)
             near_labels[i] = valid_indices[nearest_index]
 
     return near_labels
 
-def shadow_removal(img, segmented_img, label, near_labels, center_indices,i):
+# def shadow_removal(img, segmented_img, label, near_labels, center_indices,i):
+#     """
+#     Perform shadow removal based on histogram matching and boundary smoothing.
+#     """
+#     near_labels = find_non_shadow_pair(img,label, segmented_img, center_indices)
+#     # draw nearest region
+#     near_img = draw_nearest_region_only_shadow(img, segmented_img, center_indices, near_labels,label)
+#     cv2.imwrite("result/{}_near_img.jpg".format(i), near_img)
+#     hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV).astype(np.float32)
+#     h_channel, s_channel, v_channel = hsv_img[:, :, 0], hsv_img[:, :, 1], hsv_img[:, :, 2]
+
+#     for shadow_idx, lbl in enumerate(label):
+#         if lbl == 0:  # Shadow region
+#             # Find the nearest non-shadow region
+#             j = near_labels[shadow_idx]
+#             if label[j] == 1:  # Ensure it's a non-shadow region
+#                 # Perform histogram matching for each channel
+#                 print("Performing histogram matching for shadow region {} and non-shadow region {}".format(i, j))
+#                 shadow_mask = (segmented_img == shadow_idx)
+#                 non_shadow_mask = (segmented_img == j)
+                
+#                 h_channel[shadow_mask] = hist_match(h_channel[shadow_mask], h_channel[non_shadow_mask])
+#                 s_channel[shadow_mask] = hist_match(s_channel[shadow_mask], s_channel[non_shadow_mask])
+#                 v_channel[shadow_mask] = hist_match(v_channel[shadow_mask], v_channel[non_shadow_mask])
+
+#     h_channel = np.clip(h_channel, 0, 180)
+#     s_channel = np.clip(s_channel, 0, 255)
+#     v_channel = np.clip(v_channel, 0, 255)
+
+#     # Combine back the channels
+#     hsv_img[:, :, 0], hsv_img[:, :, 1], hsv_img[:, :, 2] = h_channel, s_channel, v_channel
+
+#     # Convert back to BGR color space
+#     result_img = cv2.cvtColor(hsv_img.astype(np.uint8), cv2.COLOR_HSV2BGR)
+
+#     # Smooth shadow boundaries
+#     kernel = cv2.getGaussianKernel(ksize=3, sigma=3)  # Adjust sigma for less aggressive smoothing
+#     smooth_result_img = cv2.filter2D(result_img, -1, kernel)
+
+#     return smooth_result_img
+
+
+def shadow_removal(img, segmented_img, label, near_labels, center_indices, i):
     """
     Perform shadow removal based on histogram matching and boundary smoothing.
     """
-    near_labels = find_non_shadow_pair(img,label, segmented_img, center_indices)
+    near_labels = find_non_shadow_pair(img, label, segmented_img, center_indices)
     # draw nearest region
-    near_img = draw_nearest_region_only_shadow(img, segmented_img, center_indices, near_labels,label)
+    near_img = draw_nearest_region_only_shadow(img, segmented_img, center_indices, near_labels, label)
     cv2.imwrite("result/{}_near_img.jpg".format(i), near_img)
     hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV).astype(np.float32)
     h_channel, s_channel, v_channel = hsv_img[:, :, 0], hsv_img[:, :, 1], hsv_img[:, :, 2]
 
-    for i, lbl in enumerate(label):
+    for shadow_idx, lbl in enumerate(label):
         if lbl == 0:  # Shadow region
             # Find the nearest non-shadow region
-            j = near_labels[i]
+            j = near_labels[shadow_idx]
             if label[j] == 1:  # Ensure it's a non-shadow region
                 # Perform histogram matching for each channel
                 print("Performing histogram matching for shadow region {} and non-shadow region {}".format(i, j))
-                shadow_mask = (segmented_img == i)
+                shadow_mask = (segmented_img == shadow_idx)
                 non_shadow_mask = (segmented_img == j)
                 
                 h_channel[shadow_mask] = hist_match(h_channel[shadow_mask], h_channel[non_shadow_mask])
@@ -485,8 +626,15 @@ def shadow_removal(img, segmented_img, label, near_labels, center_indices,i):
     result_img = cv2.cvtColor(hsv_img.astype(np.uint8), cv2.COLOR_HSV2BGR)
 
     # Smooth shadow boundaries
-    kernel = cv2.getGaussianKernel(ksize=3, sigma=3)  # Adjust sigma for less aggressive smoothing
-    smooth_result_img = cv2.filter2D(result_img, -1, kernel)
+    shadow_edges = cv2.Canny((segmented_img > 0).astype(np.uint8) * 255, 100, 200)
+    dilated_edges = cv2.dilate(shadow_edges, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
+    edge_mask = dilated_edges > 0
+
+    smooth_result_img = result_img.copy()
+    result_blur = cv2.GaussianBlur(result_img, (9, 9), sigmaX=3, sigmaY=3)
+
+    # Apply blur only to edge areas
+    smooth_result_img[edge_mask] = result_blur[edge_mask]
 
     return smooth_result_img
 
@@ -506,14 +654,15 @@ def main():
         # TODO: STEP1 SHADOW DETECTION
 
         # segmented_img, border_img = mean_shift(img)
-        segmented_img, border_img = quick_shift(img)
+        segmented_img, border_img = mean_shift_with_merge(img, min_region_size=500)
+        # segmented_img, border_img = quick_shift(img)   
 
         #cv2.imshow("meanshift", border_img)
         #cv2.waitKey(0)
         #cv2.imwrite("result/input{}_meanshift.jpg".format(i + 1), border_img)
         
         # np.save('segmented_img_input{}.npy'.format(i), segmented_img)
-        segmented_img = np.load('segmented_img_input{}.npy'.format(i))
+        # segmented_img = np.load('segmented_img_input{}.npy'.format(i))
 
         center_indices, center_marked_img = find_center(img, segmented_img)
 
