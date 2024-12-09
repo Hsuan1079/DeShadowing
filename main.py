@@ -764,15 +764,9 @@ def main():
 
                 # TODO: STEP1 SHADOW DETECTION
 
-<<<<<<< HEAD
                 # segmented_img, border_img = mean_shift(img)
                 segmented_img, border_img = mean_shift_with_merge(img, min_region_size=500)
                 # segmented_img, border_img = quick_shift(img)   
-=======
-                        # segmented_img, border_img = mean_shift(img)
-                        segmented_img, border_img = mean_shift_with_merge(img, min_region_size=500)
-                        # segmented_img, border_img = quick_shift(img)   
->>>>>>> fb4387081b6b51039b0e45f728b7bb7e5697532d
 
                 #cv2.imshow("meanshift", border_img)
                 #cv2.waitKey(0)
