@@ -4,11 +4,7 @@ This project addresses the challenge of shadow removal in images using tradition
 ## Requirements
 ## Experiment Results
 | original image | remove image | groud truth |
-|![image](https://github.com/user-attachments/assets/962187d0-e399-48ed-bf28-5aaa1f3f0503)
-|![image](https://github.com/user-attachments/assets/50c9d4d4-7de1-4d18-9cb1-63a6a4bfcc7b)
-
- |![image](https://github.com/user-attachments/assets/31aca6f4-98e1-410e-a7a4-b201c51236ea)
-|
+|![image](https://github.com/user-attachments/assets/962187d0-e399-48ed-bf28-5aaa1f3f0503)|![image](https://github.com/user-attachments/assets/50c9d4d4-7de1-4d18-9cb1-63a6a4bfcc7b)|![image](https://github.com/user-attachments/assets/31aca6f4-98e1-410e-a7a4-b201c51236ea)|
 
 ## Structure
 ```
