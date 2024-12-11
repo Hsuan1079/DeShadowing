@@ -701,7 +701,7 @@ def shadow_removal(img, segmented_img, label, near_labels, center_indices, i):
     near_labels = find_non_shadow_pair(img, label, segmented_img, center_indices)
     # draw nearest region
     near_img = draw_nearest_region_only_shadow(img, segmented_img, center_indices, near_labels, label)
-    cv2.imwrite("result/Paired_{}".format(i), near_img)
+    cv2.imwrite("output/Paired_{}".format(i), near_img)
     hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV).astype(np.float32)
     h_channel, s_channel, v_channel = hsv_img[:, :, 0], hsv_img[:, :, 1], hsv_img[:, :, 2]
 
@@ -749,74 +749,77 @@ Main function
 def main():
 
     # os.makedirs("result", exist_ok=True)
-    os.makedirs("Detect", exist_ok=True)
-    os.makedirs("Remove", exist_ok=True)
-    all_files = os.listdir("data/SRD/shadow")
-    jpg_files = [f for f in all_files if f.endswith('.jpg')]
-    Remove_exist = os.listdir("Remove")
-
-    for i, file in enumerate(jpg_files):
-        if file not in Remove_exist:
-            # 如果 file _ 後面數字是6的話，就是我們要的
-            if file[4] == '7':
-                print("Processing image", file)
-                img = cv2.imread(os.path.join("data/SRD/shadow", file))
-
-                # TODO: STEP1 SHADOW DETECTION
-
-                # segmented_img, border_img = mean_shift(img)
-                segmented_img, border_img = mean_shift_with_merge(img, min_region_size=500)
-                # segmented_img, border_img = quick_shift(img)   
-
-                #cv2.imshow("meanshift", border_img)
-                #cv2.waitKey(0)
-                #cv2.imwrite("result/input{}_meanshift.jpg".format(i + 1), border_img)
-                
-                # np.save('segmented_img_input{}.npy'.format(i), segmented_img)
-                # segmented_img = np.load('segmented_img_input{}.npy'.format(i))
-
-                center_indices, center_marked_img = find_center(img, segmented_img)
-
-                #cv2.imshow("center_indices", center_marked_img)
-                #cv2.waitKey(0)
-                #cv2.imwrite("result/input{}_center_marked.jpg".format(i + 1), center_marked_img)
-
-                near_labels, grad_mag, lbp_norm = find_nearest_region(img, segmented_img, center_indices)
-
-                #cv2.imshow("gradient_img".format(i+1), grad_mag.astype(np.uint8))
-                #cv2.waitKey(0)
-                #cv2.imwrite("result/input{}_gradient.jpg".format(i+1), grad_mag)
-                
-                #cv2.imshow("texture_img", lbp_norm)
-                #cv2.waitKey(0)
-                #cv2.imwrite("result/input{}_texture.jpg".format(i+1), lbp_norm)
-
-                near_img = draw_nearest_region(img, segmented_img, center_indices, near_labels)
-
-                # cv2.imshow("near_img".format(i+1), near_img)
-                # cv2.waitKey(0)
-                # cv2.imwrite("result/{}_nearest_region.jpg".format(i), near_img)
-
-                cluster_centers, cluster_std, kmeans_img = shadow_light_cluster(img, segmented_img)
-
-                # cv2.imshow("kmeans", kmeans_img)
-                # cv2.waitKey(0)
-                # cv2.imwrite("result/input{}_kmeans.jpg".format(i + 1), kmeans_img)
-
-                label, shadow_detect_img= shadow_detection(img, segmented_img, cluster_centers, cluster_std, near_labels)
-                
-                # cv2.imshow("shadow_detect", shadow_detect_img)
-                # cv2.waitKey(0)
-                cv2.imwrite("Detect/{}".format(file), shadow_detect_img)
+    # os.makedirs("Detect", exist_ok=True)
+    # os.makedirs("Remove", exist_ok=True)
+    # all_files = os.listdir("data/shadow")
+    # jpg_files = [f for f in all_files if f.endswith('.jpg')]
+    # Remove_exist = os.listdir("Remove")
 
 
-                # TODO: STEP2 SHADOW REMOVAL
-                remove_img = shadow_removal(img, segmented_img, label, near_labels, center_indices,file)
+    # for i, file in enumerate(jpg_files):
+    #     if file not in Remove_exist:
+    #         # 如果 file _ 後面數字是6的話，就是我們要的
+    #         if file[4] == '7':
+    # print("Processing image", file)
+    # img = cv2.imread(os.path.join("data/SRD/shadow", file))
+    file = "_MG_3254.jpg"
+    img = cv2.imread("data/shadow/"+file)
 
-                # cv2.imshow("remove_img", remove_img)
-                # cv2.waitKey(0)
-                cv2.imwrite("Remove/{}".format(file), remove_img)
-            
+    # TODO: STEP1 SHADOW DETECTION
+
+    # segmented_img, border_img = mean_shift(img)
+    segmented_img, border_img = mean_shift_with_merge(img, min_region_size=500)
+    # segmented_img, border_img = quick_shift(img)   
+
+    #cv2.imshow("meanshift", border_img)
+    #cv2.waitKey(0)
+    #cv2.imwrite("result/input{}_meanshift.jpg".format(i + 1), border_img)
+    
+    # np.save('segmented_img_input{}.npy'.format(i), segmented_img)
+    # segmented_img = np.load('segmented_img_input{}.npy'.format(i))
+
+    center_indices, center_marked_img = find_center(img, segmented_img)
+
+    #cv2.imshow("center_indices", center_marked_img)
+    #cv2.waitKey(0)
+    #cv2.imwrite("result/input{}_center_marked.jpg".format(i + 1), center_marked_img)
+
+    near_labels, grad_mag, lbp_norm = find_nearest_region(img, segmented_img, center_indices)
+
+    #cv2.imshow("gradient_img".format(i+1), grad_mag.astype(np.uint8))
+    #cv2.waitKey(0)
+    #cv2.imwrite("result/input{}_gradient.jpg".format(i+1), grad_mag)
+    
+    #cv2.imshow("texture_img", lbp_norm)
+    #cv2.waitKey(0)
+    #cv2.imwrite("result/input{}_texture.jpg".format(i+1), lbp_norm)
+
+    near_img = draw_nearest_region(img, segmented_img, center_indices, near_labels)
+
+    # cv2.imshow("near_img".format(i+1), near_img)
+    # cv2.waitKey(0)
+    # cv2.imwrite("result/{}_nearest_region.jpg".format(i), near_img)
+
+    cluster_centers, cluster_std, kmeans_img = shadow_light_cluster(img, segmented_img)
+
+    # cv2.imshow("kmeans", kmeans_img)
+    # cv2.waitKey(0)
+    # cv2.imwrite("result/input{}_kmeans.jpg".format(i + 1), kmeans_img)
+
+    label, shadow_detect_img= shadow_detection(img, segmented_img, cluster_centers, cluster_std, near_labels)
+    
+    # cv2.imshow("shadow_detect", shadow_detect_img)
+    # cv2.waitKey(0)
+    cv2.imwrite("output/Detect/{}".format(file), shadow_detect_img)
+
+
+    # TODO: STEP2 SHADOW REMOVAL
+    remove_img = shadow_removal(img, segmented_img, label, near_labels, center_indices,file)
+
+    # cv2.imshow("remove_img", remove_img)
+    # cv2.waitKey(0)
+    cv2.imwrite("output/Remove/{}".format(file), remove_img)
+
 
 
 if __name__ == "__main__":
